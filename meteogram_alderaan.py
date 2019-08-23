@@ -11,14 +11,17 @@ from matplotlib.patches import Circle, Ellipse, Rectangle
 from matplotlib.collections import PatchCollection
 #from geopy.geocoders import Nominatim
 from sunrise import sun
-from tzwhere import tzwhere
+from tzwhere import tzwhere as tz
 import pytz
 import warnings
 from droplet import droplet
 from wind_sock import wind_sock
 from lightning_bolt import lightning_bolt
 
-tz = tzwhere.tzwhere()
+# smooth and mean data
+SPLINE_RES = 360
+
+# tz = tzwhere.tzwhere()
 
 ## FUNCTIONS
 def find_closest(x,a):
@@ -44,7 +47,7 @@ def lat_string(lat):
         return "{:.1f}".format(abs(lat))+u'\N{DEGREE SIGN}'+"S"
 
 def timezone_offset(loc,date):
-    timezone_str = tz.tzNameAt(loc.latitude,loc.longitude)
+    timezone_str = tz.tzwhere().tzNameAt(loc.latitude,loc.longitude)
     timezone = pytz.timezone(timezone_str)
     utcoffset = timezone.utcoffset(date)
     return utcoffset
@@ -77,60 +80,20 @@ def sunrise_string(loc,date,utcoffset):
     
     return sunsymb+arrowup+sunrise_str+arrowdn+sunset_str
 
-# READ DATA
-time = np.load("data/time.npz")["arr_0"]
 
-t = np.load("data/temperature.npz")["arr_0"]
-lcc = np.load("data/low_clouds.npz")["arr_0"]
-mcc = np.load("data/medium_clouds.npz")["arr_0"]
-hcc = np.load("data/high_clouds.npz")["arr_0"]
-lsp = np.load("data/precip.npz")["arr_0"]
-u = np.load("data/uwind.npz")["arr_0"]
-v = np.load("data/vwind.npz")["arr_0"]
-
-# convert time to datetime objects
-datetime0 = datetime.datetime(1900,1,1)
-dates = [datetime0 + datetime.timedelta(hours=int(t)) for t in time]
-   
-# PICK LOCATION
 class loc_default:
     latitude = -33.4
     longitude = -70.7
     address = "Alderaan City, Alderaan"
     
-loc = loc_default()
-
-# shift dates according to timezone
-# try:
-utcoffset = timezone_offset(loc,dates[0])
-# except:
-#     warnings.warn("No timezone found. Use UTC instead")
-#     utcoffset = datetime.timedelta(0)
-
-dates = [d+utcoffset for d in dates]
-
-# shifted datevector for rain
-three_hours = datetime.timedelta(hours=3)
-rdates = [d+three_hours for d in dates[:-1]]
-
-# smooth and mean data
-SPLINE_RES = 360
-
 def spline_dates(dates, resolution=SPLINE_RES):
 
     numdates = date2num(dates)
     numdates_spline = np.linspace(numdates[0], numdates[-1], num=resolution)
     return num2date(numdates_spline)
-    
-numdates = date2num(dates)
-
-# temperature
-t = np.sort(t)                  # sort temperature by ensemble members
-tmedian = np.median(t, axis=1)   # ensemble median
-tminmax = (t.min(),t.max())     # used for axis formatting
 
 # interpolation of data
-def spline_data_by_date(data, numdates=numdates, resolution=SPLINE_RES):
+def spline_data_by_date(data, numdates, resolution=SPLINE_RES):
     numdates_spline = np.linspace(numdates[0], numdates[-1], num=resolution)
     data_spline = np.empty((resolution, data.shape[1]))
     for e in range(0, data.shape[1]):
@@ -138,13 +101,8 @@ def spline_data_by_date(data, numdates=numdates, resolution=SPLINE_RES):
         data_spline[:,e] = spline(numdates_spline)
     return data_spline
 
-t_data_spline = spline_data_by_date(t)
-lcc_data_spline = spline_data_by_date(lcc)
-mcc_data_spline = spline_data_by_date(mcc)
-hcc_data_spline = spline_data_by_date(hcc)
-
 # calculate precipitation probability
-def rain_prob(lsp,color=[0.,0.17,0.41]):
+def rain_prob(lsp, rdates, color=[0.,0.17,0.41]):
     # in mm
     rthresh = [0.05,0.5,4.,10.]      # light, medium, heavy+very heavy
     bins = np.array([min(0,lsp.min()),rthresh[0],rthresh[1],rthresh[2],max(rthresh[3],lsp.max())]) 
@@ -174,11 +132,6 @@ def rain_prob(lsp,color=[0.,0.17,0.41]):
     rain_explanation[:,-1] = [0.2,1.]   # values for example transparency
     
     return lightrain,medrain,heavyrain,rain_explanation
-    
-lightrain,medrain,heavyrain,rain_explanation = rain_prob(lsp)
-
-# wind speed
-spd = np.sqrt(u**2 + v**2)
 
 def storm(spd):
     threshold1 = 8.     # m/s   5 Beaufort 
@@ -210,8 +163,6 @@ def storm(spd):
     
     return colormat,storm_strength.astype(np.bool)
 
-p_storm,storm_strength = storm(spd)
-
 def lightning(lcc,mcc,hcc,tmedian):
     # fake some lightning chance
     tcc = (0.5*mcc + 2*lcc)/3.
@@ -236,14 +187,11 @@ def lightning(lcc,mcc,hcc,tmedian):
     
     return colormat
 
-p_light = lightning(lcc,mcc,hcc,tmedian)
-
 def snow_or_rain(tmedian):
     # fake snow information based on temperature
     snow = tmedian[:-1] < 0     # precipitation has one time step less
     return snow
 
-snow = snow_or_rain(tmedian)    
 
 #  axes formatting
 def cloud_ax_format(ax,dates,loc):
@@ -294,7 +242,7 @@ def rain_ax_format(ax,dates,rain_explanation,snow,dsize=78,dstring=(2,0,45)):
 
     
 
-def temp_ax_format(ax,tminmax,dates,utcoffset):
+def temp_ax_format(ax,tminmax,dates,utcoffset, loc):
     ax.text(0.01,0.92,sunrise_string(loc,dates[0],utcoffset),fontsize=10,transform=ax.transAxes)
     
     td = tminmax[1]-tminmax[0]
@@ -471,29 +419,90 @@ def lightning_plotter(ax,dates,p_light):
     boltpath = lightning_bolt()
     ax.scatter(dates,0.1*np.ones_like(dates),80,marker=boltpath,color=p_light,zorder=5)
     
+def example(save=False):
+    ''' Example
+    '''
     
-## PLOTTING
-fig = plt.figure(figsize=(10,4))
+    # READ DATA
+    time = np.load("data/time.npz")["arr_0"]
 
-# subplots adjust
-all_ax = gridspec.GridSpec(3, 1, height_ratios=[1,2,6],hspace=0)
-cloud_ax = plt.subplot(all_ax[0])
-rain_ax = plt.subplot(all_ax[1])
-temp_ax = plt.subplot(all_ax[2])
+    t = np.load("data/temperature.npz")["arr_0"]
+    lcc = np.load("data/low_clouds.npz")["arr_0"]
+    mcc = np.load("data/medium_clouds.npz")["arr_0"]
+    hcc = np.load("data/high_clouds.npz")["arr_0"]
+    lsp = np.load("data/precip.npz")["arr_0"]
+    u = np.load("data/uwind.npz")["arr_0"]
+    v = np.load("data/vwind.npz")["arr_0"]
 
-plt.tight_layout(rect=[0.02,.03,1,0.97])
+    # convert time to datetime objects
+    datetime0 = datetime.datetime(1900,1,1)
+    dates = [datetime0 + datetime.timedelta(hours=int(t)) for t in time]
 
-# do axes formatting
-cloud_ax_format(cloud_ax,dates,loc)
-rain_ax_format(rain_ax,dates,rain_explanation,snow)
-temp_ax_format(temp_ax,tminmax,dates,utcoffset)
+    # PICK LOCATION
+    loc = loc_default()
 
-temp_plotter(temp_ax, dates, t_data_spline, tminmax)
-clouds_plotter(cloud_ax,dates,hcc_data_spline,mcc_data_spline,lcc_data_spline)
-rain_plotter(rain_ax,lightrain,medrain,heavyrain,snow,rdates)
-wind_plotter(temp_ax,dates,p_storm,storm_strength,tminmax)
-lightning_plotter(cloud_ax,dates,p_light)
+    # shift dates according to timezone
+    # try:
+    utcoffset = timezone_offset(loc,dates[0])
+    # except:
+    #     warnings.warn("No timezone found. Use UTC instead")
+    #     utcoffset = datetime.timedelta(0)
 
-plt.savefig("examples/meteogram_"+loc.address.split(",")[0]+".pdf")
-plt.close(fig)
+    dates = [d+utcoffset for d in dates]
 
+    # shifted datevector for rain
+    three_hours = datetime.timedelta(hours=3)
+    rdates = [d+three_hours for d in dates[:-1]]
+
+    numdates = date2num(dates)
+
+    # temperature
+    t = np.sort(t)                  # sort temperature by ensemble members
+    tmedian = np.median(t, axis=1)   # ensemble median
+    tminmax = (t.min(),t.max())     # used for axis formatting
+
+    t_data_spline = spline_data_by_date(t, numdates)
+    lcc_data_spline = spline_data_by_date(lcc, numdates)
+    mcc_data_spline = spline_data_by_date(mcc, numdates)
+    hcc_data_spline = spline_data_by_date(hcc, numdates)
+    
+    lightrain,medrain,heavyrain,rain_explanation = rain_prob(lsp, rdates)
+
+    # wind speed
+    spd = np.sqrt(u**2 + v**2)
+    
+    p_storm,storm_strength = storm(spd)
+    
+    p_light = lightning(lcc,mcc,hcc,tmedian)
+    
+    snow = snow_or_rain(tmedian)    
+    
+    ## PLOTTING
+    fig = plt.figure(figsize=(10,4))
+
+    # subplots adjust
+    all_ax = gridspec.GridSpec(3, 1, height_ratios=[1,2,6],hspace=0)
+    cloud_ax = plt.subplot(all_ax[0])
+    rain_ax = plt.subplot(all_ax[1])
+    temp_ax = plt.subplot(all_ax[2])
+
+    plt.tight_layout(rect=[0.02,.03,1,0.97])
+
+    # do axes formatting
+    cloud_ax_format(cloud_ax,dates,loc)
+    rain_ax_format(rain_ax,dates,rain_explanation,snow)
+    temp_ax_format(temp_ax,tminmax,dates,utcoffset, loc)
+
+    temp_plotter(temp_ax, dates, t_data_spline, tminmax)
+    clouds_plotter(cloud_ax,dates,hcc_data_spline,mcc_data_spline,lcc_data_spline)
+    rain_plotter(rain_ax,lightrain,medrain,heavyrain,snow,rdates)
+    wind_plotter(temp_ax,dates,p_storm,storm_strength,tminmax)
+    lightning_plotter(cloud_ax,dates,p_light)
+    
+    if save:
+        plt.savefig("examples/meteogram_"+loc.address.split(",")[0]+".pdf")
+        plt.close(fig)
+
+
+if __name__=='__main__':
+    example()
