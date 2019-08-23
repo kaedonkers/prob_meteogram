@@ -13,13 +13,13 @@ from scipy.interpolate import interp1d
 from matplotlib.patches import Circle, Ellipse, Rectangle
 from matplotlib.collections import PatchCollection
 from geopy.geocoders import Nominatim
-from sunrise import sun
 from tzwhere import tzwhere
 import pytz
 import warnings
-from droplet import droplet
-from wind_sock import wind_sock
-from lightning_bolt import lightning_bolt
+from glyphs.sunrise import sun
+from glyphs.droplet import droplet
+from glyphs.wind_sock import wind_sock
+from glyphs.lightning_bolt import lightning_bolt
 
 # LOCATION ARGUMENT
 tz = tzwhere.tzwhere()
