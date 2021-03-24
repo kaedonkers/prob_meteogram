@@ -29,6 +29,7 @@ from tzwhere import tzwhere  # * somewhat heavy dependency
 
 from .sunrise import Sun
 from .patches import droplet, wind_sock, lightning_bolt
+from .cmaps import vbgr_mono_60, vbgr_mono_70
 
 
 Loc = namedtuple("Loc", "latitude longitude address")
@@ -435,7 +436,10 @@ def temp_plotter(ax, dates, t_data_spline, tminmax, color="white", alpha=0.08):
     # these temperatures will be associated with the lower and upper end of the colormap
     clev = [-10, 20]
     tmin, tmax = (-100, 100)  # absurdly low and high temperatures
-    cmap = "rainbow"
+    # cmap = "rainbow"
+    # cmap = 'viridis'
+    # cmap = vbgr_mono_60()
+    cmap = vbgr_mono_70()
     cmat = [[clev[0], clev[0]], [clev[1], clev[1]]]
     cmat_high = clev[1] * np.ones((2, 2))
     cmat_low = clev[0] * np.ones((2, 2))
@@ -765,6 +769,15 @@ def prob_meteogram(
     wind_plotter(temp_ax, time, p_storm, storm_strength, tminmax)
     lightning_plotter(cloud_ax, time, p_light)
 
+def load_colormap(fname='./vbgr_mono_60.jscm'):
+    with open(fname) as f:
+        data = json.loads(f.read())
+        name = fname.split(".")[0]
+        colors = data["colors"]
+        colors = [colors[i:i+6] for i in range(0, len(colors), 6)]
+        colors = [[int(c[2*i:2*i+2], 16) / 255 for i in range(3)] for c in colors]
+        cmap = mpl.colors.ListedColormap(colors, name)
+    return cmap
 
 if __name__ == "__main__":
     pass
